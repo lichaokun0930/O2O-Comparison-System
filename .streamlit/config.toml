@@ -1,0 +1,13 @@
+[server]
+# 监听所有网络接口，允许局域网访问
+headless = true
+address = "0.0.0.0"
+port = 8555
+
+# 启用 CORS（跨域资源共享）
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+# 禁止自动打开浏览器
+gatherUsageStats = false

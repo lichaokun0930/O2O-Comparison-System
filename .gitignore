@@ -1,0 +1,53 @@
+﻿# 大文件目录 - 不上传
+dist/
+build/
+huggingface_cache/
+__pycache__/
+
+# 缓存文件
+*.joblib
+*.pyc
+*.pyo
+*.pyd
+
+# 临时目录
+cache_backup/
+temp_hf_cache/
+temp_model_cache/
+prebuilt_cache/
+
+# 数据目录 - 本地数据
+reports/
+upload/
+raw/
+intermediate/
+logs/
+notebook/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.log
+*~
+
+# 打包相关
+*.spec
+
+# 密钥和认证文件
+license_*.txt
+authorized_keys.json
+my_fingerprint.txt
