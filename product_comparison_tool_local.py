@@ -2245,9 +2245,15 @@ def perform_hard_category_matching(df_a: pd.DataFrame, df_b: pd.DataFrame, name_
         if not matches_in_group.empty:
             all_hard_matches.append(matches_in_group)
             
-            # 记录被匹配上的商品原始索引
-            matched_indices_a.update(matches_in_group[f'index_{name_a}'].tolist())
-            matched_indices_b.update(matches_in_group[f'index_{name_b}'].tolist())
+            # ✅ 修复：优先使用原始索引（包括被去重删除的CD商品）
+            if 'all_matched_indices_a' in matches_in_group.attrs:
+                matched_indices_a.update(matches_in_group.attrs['all_matched_indices_a'])
+                matched_indices_b.update(matches_in_group.attrs['all_matched_indices_b'])
+                print(f"   ✅ 使用原始索引: 本店{len(matches_in_group.attrs['all_matched_indices_a'])}个, 竞对{len(matches_in_group.attrs['all_matched_indices_b'])}个")
+            else:
+                # 兜底：使用去重后的索引（旧逻辑）
+                matched_indices_a.update(matches_in_group[f'index_{name_a}'].tolist())
+                matched_indices_b.update(matches_in_group[f'index_{name_b}'].tolist())
 
     if not all_hard_matches:
         return pd.DataFrame(), df_a.drop(columns=['category_id']), df_b.drop(columns=['category_id'])
@@ -2324,8 +2330,14 @@ def perform_soft_fuzzy_matching(df_a: pd.DataFrame, df_b: pd.DataFrame, name_a: 
         
         if not matches_in_group.empty:
             all_soft_matches.append(matches_in_group)
-            matched_indices_a.update(matches_in_group[f'index_{name_a}'].tolist())
-            matched_indices_b.update(matches_in_group[f'index_{name_b}'].tolist())
+            
+            # ✅ 修复：优先使用原始索引
+            if 'all_matched_indices_a' in matches_in_group.attrs:
+                matched_indices_a.update(matches_in_group.attrs['all_matched_indices_a'])
+                matched_indices_b.update(matches_in_group.attrs['all_matched_indices_b'])
+            else:
+                matched_indices_a.update(matches_in_group[f'index_{name_a}'].tolist())
+                matched_indices_b.update(matches_in_group[f'index_{name_b}'].tolist())
     
     # === 🔧 方案2C：智能混合策略 - 三级分类补充匹配 ===
     enable_cat3_fallback = os.environ.get('ENABLE_CAT3_FALLBACK', '1') == '1'
@@ -2727,7 +2739,28 @@ def _core_fuzzy_match(df_a: pd.DataFrame, df_b: pd.DataFrame, name_a: str, name_
             match_info[f'index_{name_b}'] = best_match_row_b.name
             matched_products.append(match_info)
 
-    return pd.DataFrame(matched_products)
+    # 🔧 【修复】竞对侧去重：记录所有原始索引，避免CD商品被误判为独有商品
+    matched_df = pd.DataFrame(matched_products)
+    if not matched_df.empty and f'index_{name_b}' in matched_df.columns:
+        before_dedup = len(matched_df)
+        
+        # ✅ 关键修复：去重前先记录所有原始索引（包括即将被删除的CD商品）
+        all_matched_a_indices = matched_df[f'index_{name_a}'].tolist()
+        all_matched_b_indices = matched_df[f'index_{name_b}'].tolist()
+        
+        # 按得分排序，保留每个竞对商品的最佳匹配
+        matched_df = matched_df.sort_values('composite_similarity_score', ascending=False)
+        matched_df = matched_df.drop_duplicates(subset=[f'index_{name_b}'], keep='first')
+        after_dedup = len(matched_df)
+        
+        if before_dedup > after_dedup:
+            print(f"   🔧 竞对侧去重: 移除 {before_dedup - after_dedup} 个重复匹配（保留得分最高的匹配）")
+        
+        # ✅ 将原始索引保存为DataFrame属性，供调用方使用
+        matched_df.attrs['all_matched_indices_a'] = all_matched_a_indices
+        matched_df.attrs['all_matched_indices_b'] = all_matched_b_indices
+    
+    return matched_df
 
 class DifferentialMatchConfig:
     """差异品匹配动态权重配置"""
@@ -6138,6 +6171,19 @@ def main():
 
         # --- 合并所有模糊匹配结果 ---
         fuzzy_matches_df = pd.concat([hard_matches_df, soft_matches_df], ignore_index=True)
+        
+        # 🔧 【新增】跨阶段去重：确保同一个竞对商品不被硬匹配和软匹配重复
+        if not fuzzy_matches_df.empty:
+            # 找到竞对商品名称列（包含"_B"的列）
+            b_cols = [col for col in fuzzy_matches_df.columns if '商品名称' in col and '_B' in col]
+            if b_cols:
+                b_name_col = b_cols[0]
+                before_count = len(fuzzy_matches_df)
+                fuzzy_matches_df = fuzzy_matches_df.sort_values('composite_similarity_score', ascending=False)
+                fuzzy_matches_df = fuzzy_matches_df.drop_duplicates(subset=[b_name_col], keep='first')
+                removed = before_count - len(fuzzy_matches_df)
+                if removed > 0:
+                    print(f"   🔧 跨阶段去重: 移除 {removed} 个硬匹配+软匹配的重复商品（保留得分最高）")
         
         print(f"✅ 名称模糊匹配总共找到 {len(fuzzy_matches_df)} 个匹配 (硬分类: {len(hard_matches_df)}, 软兜底: {len(soft_matches_df)})")
         print("✅ [步骤 5/7] 商品匹配完成！")
